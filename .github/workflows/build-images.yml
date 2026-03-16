@@ -1,0 +1,132 @@
+name: Build and Push Images
+
+on:
+  workflow_dispatch:
+    inputs:
+      images:
+        description: "Images to build (comma-separated). Leave empty to build all."
+        required: false
+        default: ""
+        type: string
+      version:
+        description: "Version tag (e.g. 1.0.0). Leave empty to auto-increment patch."
+        required: false
+        default: ""
+        type: string
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository }}
+
+jobs:
+  build-base:
+    if: inputs.images == '' || contains(inputs.images, 'agent-base')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      base-tag: ${{ steps.resolve.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - id: resolve
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            echo "tag=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            # Auto-increment: find latest semver tag, bump patch
+            LATEST=$(git tag -l 'v*' --sort=-v:refname | head -n1)
+            if [ -z "$LATEST" ]; then
+              echo "tag=0.1.0" >> "$GITHUB_OUTPUT"
+            else
+              VERSION="${LATEST#v}"
+              MAJOR=$(echo "$VERSION" | cut -d. -f1)
+              MINOR=$(echo "$VERSION" | cut -d. -f2)
+              PATCH=$(echo "$VERSION" | cut -d. -f3)
+              echo "tag=${MAJOR}.${MINOR}.$((PATCH + 1))" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/agent-base
+          tags: |
+            type=raw,value=${{ steps.resolve.outputs.tag }}
+            type=raw,value=latest
+            type=sha,prefix=
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./agent-base
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=agent-base
+          cache-to: type=gha,mode=max,scope=agent-base
+
+  build-runtime:
+    needs: build-base
+    if: inputs.images == '' || contains(inputs.images, 'agent-runtime')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/agent-runtime
+          tags: |
+            type=raw,value=${{ needs.build-base.outputs.base-tag }}
+            type=raw,value=latest
+            type=sha,prefix=
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./agent-runtime
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            BASE_TAG=${{ needs.build-base.outputs.base-tag }}
+          cache-from: type=gha,scope=agent-runtime
+          cache-to: type=gha,mode=max,scope=agent-runtime
+
+  tag-release:
+    needs: [build-base, build-runtime]
+    if: always() && needs.build-base.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - run: |
+          TAG="v${{ needs.build-base.outputs.base-tag }}"
+          git tag "$TAG"
+          git push origin "$TAG"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
