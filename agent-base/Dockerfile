@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-noto-cjk fonts-wqy-zenhei \
     && sed -i '/zh_CN.UTF-8/s/^# //g' /etc/locale.gen && locale-gen \
     && ln -s /usr/bin/python3 /usr/bin/python \
-    && ln -s /usr/bin/pip3 /usr/bin/pip \
+    && printf '#!/bin/sh\nexec python3 -m pip "$@"\n' > /usr/bin/pip && chmod +x /usr/bin/pip \
     && rm -rf /var/lib/apt/lists/*
 
 # Node.js LTS
