@@ -8,7 +8,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # System packages + Chinese locale/fonts + Python3/pip
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl git jq wget unzip locales \
-    python3 python3-pip python3-venv python3-dev \
+    python3 python3-pip python3-venv python3-dev python3-lxml \
     fonts-noto-cjk fonts-wqy-zenhei \
     && sed -i '/zh_CN.UTF-8/s/^# //g' /etc/locale.gen && locale-gen \
     && ln -s /usr/bin/python3 /usr/bin/python \
